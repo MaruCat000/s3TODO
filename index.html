@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>あさの ぼうけん</title>
+<!--
+  朝のおたすけ冒険アプリ 第1段階の試作（HTML1枚・サーバーなし）
+
+  2026-11-20 作成
+    きっかけ: 設計書ドラフト(../朝のおたすけ冒険アプリ 設計書 ドラフト.md) 12章の第1段階を動く形にする。
+    画面構成: モック (1).pdf の「きょう/あした タブ + 下に もこ の会話」を採用。入口に月マップ(モック.pdf 1ページ目)。
+    保存: 端末の localStorage のみ。外部送信なし。子どもの名前などは持たない。
+    やらないこと(この段階では):
+      - AIとの会話。もこ の返事は決まったセリフだけ。自由入力欄も出さない(第3段階)
+      - 保護者画面・TODO設定画面(第2段階)。候補は下の CANDIDATES を直接書き換える
+      - 「すきな ものの おだい」(保護者の承認が要るので第4段階)。ごほうび枠は「もこと おはなし」にした
+      - 点数・失敗・連続記録の表示。休んだ日に印をつけること(設計書2章)
+  2026-11-20 月マップを すごろく形 → ふつうのカレンダー形(7列・にちようび始まり)に変更
+    きっかけ: カレンダーの読み方の練習にもなるので、見慣れた形にしたい
+    対処: 曜日の見出しをひらがなで追加。日曜は赤・土曜は青の文字(よくあるカレンダーと同じ)
+    やらないこと: 祝日の色分け(祝日データが要るので後回し)
+  試すとき:
+    ?date=2026-11-17  … 今日の日付を差し替える
+    ?demo             … 過去の日に見本の記録を入れて表示する(保存はしない)
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FFF6E6;
+    --ink: #3B2F2A;
+    --sub: #7A675C;
+    --line: #DCCFB8;
+    --card: #FFFFFF;
+    --orange: #FF9F43;
+    --cream: #FFEFD0;
+    --prep: #CDE8F6;
+    --study: #FFD89A;
+    --reward: #F8CFE0;
+    --green: #D8F0C8;
+    --mapbg: #E3F1D8;
+    --plain: #EFE8D8;
+    --future: #A9C79A;
+    --night: #2C3358;
+    --night-card: #3B4573;
+    --night-line: #5E6AA0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "BIZ UDPGothic", sans-serif;
+    font-weight: 700;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .screen { display: none; height: 100dvh; max-width: 520px; margin: 0 auto; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  /* ---------- 月マップ ---------- */
+  #map { padding: 20px 16px 16px; }
+  .map-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; }
+  .map-head small { display: block; color: var(--sub); font-size: 14px; }
+  .map-head h1 { margin: 0; font-size: 40px; font-weight: 900; line-height: 1.1; }
+  .count { background: var(--study); border-radius: 999px; padding: 8px 16px; font-size: 14px; }
+  .count b { font-size: 22px; }
+  .board { background: var(--mapbg); border-radius: 22px; padding: 10px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .wday { text-align: center; font-size: 14px; padding: 2px 0 4px; }
+  .wday.sun, .cell.sun:not(.today) { color: #C8504A; }
+  .wday.sat, .cell.sat:not(.today) { color: #3F72B8; }
+  .cell {
+    aspect-ratio: 1; border-radius: 12px; border: none; background: var(--plain);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+    font-size: 15px; color: var(--sub); padding: 0; min-width: 0;
+  }
+  .cell svg { width: 20px; height: 20px; }
+  .cell.done { color: var(--ink); }
+  .cell.future { background: transparent; border: 2px dotted var(--future); color: #5F7F52; cursor: default; }
+  .cell.tomorrow { background: #FFF8EC; border: 2.5px dashed var(--orange); color: var(--ink); }
+  .cell.today { background: var(--orange); border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--ink); color: var(--ink); font-size: 18px; }
+  .cell .tag { font-size: 10px; }
+  .cell.plain { cursor: default; }
+  .map-foot { margin-top: auto; display: flex; flex-direction: column; gap: 12px; }
+  .say { display: flex; align-items: center; gap: 10px; }
+  .bubble {
+    flex: 1; background: #fff; border: 2.5px solid var(--ink); border-radius: 20px 20px 4px 20px;
+    padding: 12px 16px; font-size: 18px; line-height: 1.5; min-height: 56px;
+  }
+  .big {
+    width: 100%; border: 3px solid var(--ink); background: var(--orange); border-radius: 999px;
+    padding: 16px; font-size: 24px; font-weight: 900; box-shadow: 0 5px 0 var(--ink);
+  }
+  .big:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--ink); }
+
+  /* ---------- 日の画面 ---------- */
+  #day .top { flex: 1 1 auto; overflow-y: auto; padding: 16px 16px 12px; }
+  #day.night .top { background: var(--night); color: #FFF3DC; }
+  .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .back {
+    width: 48px; height: 48px; flex: none; border: 2.5px solid var(--ink); border-radius: 14px; background: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 22px;
+  }
+  .tabs { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tab { border: 2.5px solid var(--line); background: #fff; border-radius: 16px; padding: 10px 0; font-size: 20px; }
+  .tab.on { border-color: var(--ink); background: var(--orange); box-shadow: 0 4px 0 var(--ink); }
+  .date { color: var(--sub); font-size: 14px; margin: 0; }
+  #day.night .date { color: #C9CDEA; }
+  h2 { margin: 2px 0 4px; font-size: 30px; font-weight: 900; }
+  .hint { margin: 0 0 12px; font-size: 15px; }
+  .list { display: flex; flex-direction: column; gap: 10px; }
+  .item {
+    display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+    background: var(--card); border: 2.5px solid var(--line); border-radius: 20px; padding: 12px 14px;
+  }
+  .item .ring { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 3px solid #BFB09A; display: flex; align-items: center; justify-content: center; }
+  .item.sel { background: var(--cream); border-color: var(--ink); box-shadow: 0 4px 0 var(--ink); }
+  .item.sel .ring, .item.done .ring { background: var(--orange); border-color: var(--ink); }
+  .item.done { background: #F4F0E6; border-style: solid; }
+  .item.done .label { color: var(--sub); }
+  .kind { display: inline-block; border-radius: 999px; padding: 2px 12px; font-size: 13px; color: var(--ink); }
+  .kind.prep { background: var(--prep); } .kind.study { background: var(--study); } .kind.reward { background: var(--reward); }
+  .label { display: block; font-size: 21px; margin-top: 4px; }
+  .note { font-size: 12px; color: var(--sub); margin-left: 6px; }
+  .doit {
+    margin-left: auto; flex: none; border: 2.5px solid var(--ink); background: var(--orange); border-radius: 999px;
+    padding: 8px 14px; font-size: 17px; font-weight: 900; box-shadow: 0 3px 0 var(--ink);
+  }
+  .stamp { margin-left: auto; flex: none; font-size: 15px; color: #C46A12; }
+  .sub-btn {
+    margin-top: 12px; border: 2px solid var(--sub); background: transparent; border-radius: 999px; padding: 10px 20px; font-size: 16px;
+  }
+  .row-btns { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  #day.night .item { background: var(--night-card); border-color: var(--night-line); color: #FFF3DC; }
+  #day.night .item .ring { border-color: #9AA3D6; }
+  #day.night .item.sel { background: var(--cream); border-color: #FFD89A; color: var(--ink); box-shadow: none; }
+  #day.night .sub-btn { border-color: #9AA3D6; color: #E6E8F7; }
+  #day.night .big { border-color: #FFD89A; box-shadow: none; }
+
+  /* ---------- もこ の会話 ---------- */
+  .chat {
+    flex: 0 0 auto; height: 44dvh; min-height: 280px; background: #fff; border-top: 2.5px solid var(--ink);
+    border-radius: 28px 28px 0 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px;
+  }
+  .persona { display: flex; align-items: center; gap: 8px; }
+  .persona .face { width: 44px; height: 44px; flex: none; }
+  .pbtn { flex: 1; border: 2.5px solid var(--line); background: #fff; border-radius: 14px; padding: 8px 0; font-size: 15px; }
+  .pbtn.on { border-color: var(--ink); box-shadow: 0 3px 0 var(--ink); }
+  .msgs { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+  .m { max-width: 80%; padding: 10px 14px; font-size: 17px; line-height: 1.5; border-radius: 18px; }
+  .m.moko { align-self: flex-start; border: 2px solid var(--ink); background: #fff; }
+  .m.me { align-self: flex-end; background: var(--study); border-radius: 18px 18px 4px 18px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 2.5px solid var(--ink); background: #fff; border-radius: 999px; padding: 8px 16px; font-size: 16px; }
+</style>
+</head>
+<body>
+
+<!-- 月マップ -->
+<section id="map" class="screen">
+  <div class="map-head">
+    <div><small>ひとつきの ぼうけん</small><h1 id="mapMonth"></h1></div>
+    <div class="count">できたこと <b id="doneCount">0</b> こ</div>
+  </div>
+  <div class="board" id="board"></div>
+  <div class="map-foot">
+    <div class="say"><div class="bubble" id="mapBubble"></div><span id="mapFace"></span></div>
+    <button class="big" id="openToday">きょうを ひらく</button>
+  </div>
+</section>
+
+<!-- 日の画面（きょう / あした） -->
+<section id="day" class="screen">
+  <div class="top">
+    <div class="bar">
+      <button class="back" id="toMap" aria-label="マップに もどる">‹</button>
+      <div class="tabs">
+        <button class="tab" data-tab="today">きょう</button>
+        <button class="tab" data-tab="tomorrow">あした</button>
+      </div>
+    </div>
+    <p class="date" id="dayDate"></p>
+    <h2 id="dayTitle"></h2>
+    <p class="hint" id="dayHint"></p>
+    <div class="list" id="list"></div>
+    <div id="dayBtns"></div>
+  </div>
+  <div class="chat">
+    <div class="persona">
+      <span id="chatFace"></span>
+      <button class="pbtn" data-p="nori">ノリノリ</button>
+      <button class="pbtn" data-p="odayaka">おだやか</button>
+      <button class="pbtn" data-p="monoshiri">ものしり</button>
+    </div>
+    <div class="msgs" id="msgs"></div>
+    <div class="chips" id="chips"></div>
+  </div>
+</section>
+
+<script>
+// ============ 設定（第2段階で保護者画面から変えられるようにする予定） ============
+// 準備は上から順に1つずつ候補に出る。終わると次の準備が出る。
+const PREP_STEPS = [
+  { id: 'wash',    label: 'かおを あらう' },
+  { id: 'clothes', label: 'きがえる' },
+  { id: 'meal',    label: 'あさごはん' },
+  { id: 'bag',     label: 'もちものを いれる' },
+];
+const STUDY  = { id: 'kumon', kind: 'study',  label: 'KUMONの しゅくだい' };
+const REWARD = { id: 'talk',  kind: 'reward', label: 'もこと おはなし' };
+const KIND_NAME = { prep: 'じゅんび', study: 'べんきょう', reward: 'ごほうび' };
+
+// もこ の色とセリフ（性格ごと）
+const PERSONAS = {
+  nori: {
+    color: '#FFB866',
+    greet: 'おはよー！ きょうは どこまで いけそう？',
+    picked: 'いいね！ それ いこう！',
+    done: { prep: 'やったー！ 1マス すすんだよ！', study: 'すごいじゃん！ KUMON おわった！', reward: 'たのしかったね！' },
+    rest: 'りょうかい！ きょうは ゆっくり しよ！',
+    plan: 'あしたが たのしみだね！',
+  },
+  odayaka: {
+    color: '#BFE3F5',
+    greet: 'おはよう。きょうは どこまで いけそう？',
+    picked: 'うん、それに しようね。',
+    done: { prep: 'できたね。1マス すすんだよ。', study: 'KUMON、がんばったね。すごいよ。', reward: 'おはなし できて うれしいな。' },
+    rest: 'うん、きょうは ゆっくり やすもうね。',
+    plan: 'いいね。あしたが たのしみだね。',
+  },
+  monoshiri: {
+    color: '#CDEBB8',
+    greet: 'おはよう。あさの ひかりは あたまを すっきり させるんだって。きょうは どこまで いけそう？',
+    picked: 'なるほど、それに するんだね。',
+    done: { prep: 'できた！ 1マス すすんだよ。', study: 'KUMON おわり！ のうが よろこんでるよ。', reward: 'はなすと、きもちが かるく なるんだって。' },
+    rest: 'やすむのも だいじな しごと なんだよ。',
+    plan: 'あしたの けいかく、ばっちりだね。',
+  },
+};
+
+// 返事の候補ボタン（決まった返事だけ。AIはつながない）
+const REPLIES = {
+  root: [
+    { say: 'やったよ', moko: 'すごいじゃん！ うえの カードの「できた！」を おしてね', next: 'root' },
+    { say: 'だるいよー', moko: 'うんうん。わかるよー。なにが だるい？', next: 'darui' },
+    { say: 'ねむい', moko: 'そっか、ねむいんだね。ゆっくり いこう。', next: 'root' },
+  ],
+  darui: [
+    { say: 'みずが つめたい', moko: 'つめたいよね。ぬるい おゆでも いいんだよ。', next: 'root' },
+    { say: 'めんどう', moko: 'そっか。ひとつ えらべば OK だよ。', next: 'root' },
+    { say: 'ねむい', moko: 'そっか、ねむいんだね。ゆっくり いこう。', next: 'root' },
+  ],
+};
+
+// ============ 日付 ============
+const params = new URLSearchParams(location.search);
+const DEMO = params.has('demo');
+function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function parseYmd(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+const TODAY = /^\d{4}-\d{2}-\d{2}$/.test(params.get('date') || '') ? parseYmd(params.get('date')) : new Date();
+TODAY.setHours(0, 0, 0, 0);
+const TOMORROW = new Date(TODAY); TOMORROW.setDate(TODAY.getDate() + 1);
+const T = ymd(TODAY), TM = ymd(TOMORROW);
+const WEEK = ['にちようび', 'げつようび', 'かようび', 'すいようび', 'もくようび', 'きんようび', 'どようび'];
+const jpDate = d => `${d.getMonth() + 1}がつ${d.getDate()}にち ${WEEK[d.getDay()]}`;
+
+// ============ 保存 ============
+// days[日付] = { done: [id...], sel: [id...], rest: bool }, plans[日付] = [id...]
+const KEY = 'otasuke-v1';
+function load() {
+  const empty = { days: {}, plans: {}, persona: 'odayaka' };
+  if (DEMO) return demoState();
+  try { return Object.assign(empty, JSON.parse(localStorage.getItem(KEY)) || {}); } catch (e) { return empty; }
+}
+function save() { if (DEMO) return; try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+function demoState() {
+  const s = { days: {}, plans: {}, persona: 'odayaka' };
+  const pattern = [['wash'], ['kumon'], ['wash', 'kumon'], ['wash'], null, ['clothes', 'kumon'], ['talk']];
+  for (let i = 1; i < TODAY.getDate(); i++) {
+    const p = pattern[i % pattern.length];
+    if (p) s.days[ymd(new Date(TODAY.getFullYear(), TODAY.getMonth(), i))] = { done: p, sel: [], rest: false };
+  }
+  return s;
+}
+let S = load();
+const dayRec = key => (S.days[key] ||= { done: [], sel: [], rest: false });
+
+// ============ 候補 ============
+function itemById(id) {
+  const p = PREP_STEPS.find(x => x.id === id);
+  if (p) return { ...p, kind: 'prep' };
+  // 設定を書き換えて消えた id が古い記録に残っていても止まらないように
+  return [STUDY, REWARD].find(x => x.id === id) || { id, kind: 'prep', label: 'できたこと' };
+}
+// その日の候補3つ: まだの準備の先頭 / KUMON / ごほうび
+function candidates(doneIds) {
+  const prep = PREP_STEPS.find(p => !doneIds.includes(p.id));
+  return [prep && { ...prep, kind: 'prep' }, STUDY, REWARD].filter(Boolean);
+}
+
+// ============ 絵 ============
+function faceSvg(color, size = 64) {
+  return `<svg class="face" width="${size}" height="${size}" viewBox="0 0 64 64" aria-hidden="true">
+    <path d="M12 26 L14 6 L28 18 Z M52 26 L50 6 L36 18 Z" fill="${color}" stroke="#3B2F2A" stroke-width="3" stroke-linejoin="round"/>
+    <circle cx="32" cy="36" r="24" fill="${color}" stroke="#3B2F2A" stroke-width="3"/>
+    <circle cx="24" cy="34" r="3" fill="#3B2F2A"/><circle cx="40" cy="34" r="3" fill="#3B2F2A"/>
+    <ellipse cx="18" cy="42" rx="4" ry="2.5" fill="#F59AA8"/><ellipse cx="46" cy="42" rx="4" ry="2.5" fill="#F59AA8"/>
+    <path d="M26 44 Q32 49 38 44" fill="none" stroke="#3B2F2A" stroke-width="3" stroke-linecap="round"/></svg>`;
+}
+const ICON = {
+  prep:   '<svg viewBox="0 0 24 24" fill="none" stroke="#3B2F2A" stroke-width="2.2" stroke-linejoin="round"><path d="M4 11 L12 4 L20 11 V20 H4 Z"/></svg>',
+  study:  '<svg viewBox="0 0 24 24" fill="none" stroke="#3B2F2A" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="8" r="4.5"/><path d="M12 12.5 V21"/></svg>',
+  reward: '<svg viewBox="0 0 24 24" fill="none" stroke="#3B2F2A" stroke-width="2.2" stroke-linejoin="round"><path d="M12 3 L14.6 9 L21 9.6 L16 13.8 L17.6 20.2 L12 16.8 L6.4 20.2 L8 13.8 L3 9.6 L9.4 9 Z"/></svg>',
+};
+const CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3B2F2A" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12 L10 17 L19 7"/></svg>';
+const MAP_COLORS = ['#D8F0C8', '#F8CFE0', '#FFD89A', '#C5E5F7'];
+
+// ============ 月マップ ============
+const $ = id => document.getElementById(id);
+function renderMap() {
+  const y = TODAY.getFullYear(), m = TODAY.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  $('mapMonth').textContent = `${m + 1}がつ`;
+  // ふつうの カレンダーと 同じ ならび（にちようび はじまり）
+  const board = $('board');
+  board.innerHTML = '';
+  ['にち', 'げつ', 'か', 'すい', 'もく', 'きん', 'ど'].forEach((w, i) => {
+    const h = document.createElement('div');
+    h.className = 'wday' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '');
+    h.textContent = w;
+    board.append(h);
+  });
+  const offset = new Date(y, m, 1).getDay();
+  for (let i = 0; i < offset; i++) board.append(document.createElement('div'));
+  let total = 0, colorIdx = 0;
+  for (let n = 1; n <= last; n++) {
+    const cell = document.createElement('button');
+    const date = new Date(y, m, n), key = ymd(date);
+    cell.className = 'cell' + (date.getDay() === 0 ? ' sun' : date.getDay() === 6 ? ' sat' : '');
+    const rec = S.days[key];
+    const done = rec ? rec.done : [];
+    total += done.length;
+    if (key === T) {
+      cell.classList.add('today');
+      cell.innerHTML = `<span class="tag">きょう</span>${n}`;
+      cell.onclick = () => openDay('today');
+    } else if (key === TM) {
+      cell.classList.add('tomorrow');
+      cell.innerHTML = `<span class="tag">あした</span>${n}`;
+      cell.onclick = () => openDay('tomorrow');
+    } else if (date > TODAY) {
+      cell.classList.add('future'); cell.disabled = true; cell.textContent = n;
+    } else if (done.length) {
+      cell.classList.add('done');
+      cell.style.background = MAP_COLORS[colorIdx++ % MAP_COLORS.length];
+      cell.innerHTML = ICON[itemById(done[done.length - 1]).kind] + `<span>${n}</span>`;
+      cell.onclick = () => {
+        const names = done.map(id => '「' + itemById(id).label + '」').join(' と ');
+        $('mapBubble').textContent = `${m + 1}がつ${n}にちは ${names} が できたよ！`;
+      };
+    } else {
+      // 記録のない日は そのまま（休みの印は出さない）
+      cell.classList.add('plain'); cell.disabled = true; cell.textContent = n;
+    }
+    board.append(cell);
+  }
+  $('doneCount').textContent = total;
+  const P = PERSONAS[S.persona];
+  $('mapFace').innerHTML = faceSvg(P.color, 72);
+  $('mapBubble').textContent = P.greet;
+}
+$('openToday').onclick = () => openDay('today');
+
+// ============ 日の画面 ============
+let tab = 'today';
+function openDay(t) {
+  tab = t;
+  show('day');
+  renderDay();
+  if (!$('msgs').children.length) { mokoSay(PERSONAS[S.persona].greet); }
+  renderChips('root');
+}
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => { tab = b.dataset.tab; renderDay(); });
+$('toMap').onclick = () => { renderMap(); show('map'); };
+
+function renderDay() {
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  $('day').classList.toggle('night', tab === 'tomorrow');
+  tab === 'today' ? renderToday() : renderTomorrow();
+}
+
+function cardHtml(it, extra = '') {
+  return `<span class="ring">${extra.includes('ring-check') ? CHECK : ''}</span>
+    <span><span class="kind ${it.kind}">${KIND_NAME[it.kind]}</span>${extra.includes('planned') ? '<span class="note">きのう えらんだよ</span>' : ''}
+    <span class="label">${it.label}</span></span>`;
+}
+
+function renderToday() {
+  const rec = dayRec(T);
+  // 前の晩に えらんだ ものを、きょうの「やる」に入れておく（1回だけ）
+  if (S.plans[T]) { for (const id of S.plans[T]) if (!rec.sel.includes(id) && !rec.done.includes(id)) rec.sel.push(id); rec.planned = S.plans[T]; delete S.plans[T]; save(); }
+  $('dayDate').textContent = jpDate(TODAY);
+  $('dayTitle').textContent = 'きょう これやる？';
+  $('dayHint').textContent = rec.rest ? 'きょうは おやすみの ひ。きが むいたら えらんでも いいよ。' : 'ひとつ えらべば OK。ほかは ボーナスだよ。';
+  const list = $('list'); list.innerHTML = '';
+
+  // できたもの
+  for (const id of rec.done) {
+    const it = itemById(id), el = document.createElement('div');
+    el.className = 'item done';
+    el.innerHTML = cardHtml(it, 'ring-check') + '<span class="stamp">できた！</span>';
+    list.append(el);
+  }
+  // 候補（まだのもの）
+  const planned = rec.planned || [];
+  for (const it of candidates(rec.done).filter(c => !rec.done.includes(c.id))) {
+    const sel = rec.sel.includes(it.id);
+    const el = document.createElement('button');
+    el.className = 'item' + (sel ? ' sel' : '');
+    el.innerHTML = cardHtml(it, (sel ? 'ring-check ' : '') + (planned.includes(it.id) ? 'planned' : ''));
+    el.onclick = () => {
+      rec.sel = sel ? rec.sel.filter(x => x !== it.id) : [...rec.sel, it.id];
+      if (!sel) { rec.rest = false; mokoSay(PERSONAS[S.persona].picked); }
+      save(); renderToday();
+    };
+    if (sel) {
+      const go = document.createElement('span');
+      go.className = 'doit'; go.textContent = 'できた！'; go.setAttribute('role', 'button');
+      go.onclick = e => { e.stopPropagation(); markDone(it); };
+      el.append(go);
+    }
+    list.append(el);
+  }
+  const btns = $('dayBtns'); btns.innerHTML = '';
+  if (!rec.done.length && !rec.rest) {
+    const b = document.createElement('button');
+    b.className = 'sub-btn'; b.textContent = 'きょうは おやすみする';
+    b.onclick = () => { rec.rest = true; rec.sel = []; save(); mokoSay(PERSONAS[S.persona].rest); renderToday(); };
+    btns.append(b);
+  }
+}
+
+function markDone(it) {
+  const rec = dayRec(T);
+  rec.sel = rec.sel.filter(x => x !== it.id);
+  rec.done.push(it.id);
+  // 準備は つぎの手順も「やる」のまま 出しておく
+  if (it.kind === 'prep') {
+    const next = candidates(rec.done).find(c => c.kind === 'prep');
+    if (next && !rec.sel.includes(next.id)) rec.sel.push(next.id);
+  }
+  save();
+  mokoSay(PERSONAS[S.persona].done[it.kind]);
+  renderToday();
+}
+
+function renderTomorrow() {
+  const chosen = S.plans[TM] || [];
+  let pick = [...chosen];
+  $('dayDate').textContent = jpDate(TOMORROW);
+  $('dayTitle').textContent = 'あしたは なにする？';
+  $('dayHint').textContent = 'えらばなくても だいじょうぶ。あさ いっしょに きめても いいよ。';
+  const list = $('list'); list.innerHTML = '';
+  const draw = () => {
+    list.innerHTML = '';
+    for (const it of candidates([])) {
+      const on = pick.includes(it.id);
+      const el = document.createElement('button');
+      el.className = 'item' + (on ? ' sel' : '');
+      el.innerHTML = cardHtml(it, on ? 'ring-check' : '');
+      el.onclick = () => { pick = on ? pick.filter(x => x !== it.id) : [...pick, it.id]; draw(); };
+      list.append(el);
+    }
+  };
+  draw();
+  const btns = $('dayBtns'); btns.innerHTML = '<div class="row-btns"></div>';
+  const ok = document.createElement('button');
+  ok.className = 'big'; ok.textContent = 'あしたの ぶん きまり';
+  ok.onclick = () => {
+    if (pick.length) { S.plans[TM] = pick; mokoSay(PERSONAS[S.persona].plan); }
+    else { delete S.plans[TM]; mokoSay('うん、あさに いっしょに きめよう。'); }
+    save();
+  };
+  const later = document.createElement('button');
+  later.className = 'sub-btn'; later.textContent = 'あさに きめる';
+  later.onclick = () => { delete S.plans[TM]; pick = []; save(); draw(); mokoSay('うん、あさに いっしょに きめよう。'); };
+  btns.firstChild.append(ok, later);
+}
+
+// ============ もこ の会話（決まったセリフのみ） ============
+function mokoSay(text) { addMsg('moko', text); }
+function addMsg(who, text) {
+  const el = document.createElement('div');
+  el.className = 'm ' + who; el.textContent = text;
+  $('msgs').append(el);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+function renderChips(node) {
+  const box = $('chips'); box.innerHTML = '';
+  for (const r of REPLIES[node]) {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.textContent = r.say;
+    b.onclick = () => { addMsg('me', r.say); setTimeout(() => { mokoSay(r.moko); renderChips(r.next); }, 400); };
+    box.append(b);
+  }
+}
+function renderPersona() {
+  document.querySelectorAll('.pbtn').forEach(b => {
+    const on = b.dataset.p === S.persona;
+    b.classList.toggle('on', on);
+    b.style.background = on ? PERSONAS[b.dataset.p].color : '#fff';
+  });
+  $('chatFace').innerHTML = faceSvg(PERSONAS[S.persona].color, 44);
+}
+document.querySelectorAll('.pbtn').forEach(b => b.onclick = () => {
+  if (S.persona === b.dataset.p) return;
+  S.persona = b.dataset.p; save(); renderPersona(); mokoSay(PERSONAS[S.persona].greet);
+});
+
+// ============ 画面きりかえ ============
+function show(id) { document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === id)); }
+
+renderPersona();
+renderMap();
+show('map');
+</script>
+</body>
+</html>
